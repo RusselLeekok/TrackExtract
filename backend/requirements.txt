@@ -1,0 +1,13 @@
+celery==5.5.3
+cryptography==45.0.4
+fastapi==0.115.14
+faster-whisper==1.1.1
+pydantic==2.11.7
+pydantic-settings==2.10.1
+PyMySQL==1.1.1
+python-multipart==0.0.20
+redis==6.2.0
+requests==2.32.4
+SQLAlchemy==2.0.41
+uvicorn[standard]==0.35.0
+yt-dlp==2026.7.4
