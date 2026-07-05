@@ -2,6 +2,16 @@
 
 TrackExtract 是一个基于真实媒体工具链的视频处理 Web 应用，用来提取视频、音频、字幕轨，并支持 Whisper 字幕生成与字幕片段编辑。
 
+## 界面预览 🖼️
+
+### 媒体导入
+
+![媒体导入界面](docs/images/media-history-upload.png)
+
+### 媒体历史记录
+
+![媒体历史记录界面](docs/images/media-history-records.png)
+
 ## 功能亮点 ✨
 
 - 上传本地视频/音频，或通过 URL 导入在线媒体
