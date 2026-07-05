@@ -388,9 +388,9 @@ export default function App() {
     }, LOCKED_RETURN_DELAY_MS);
   };
 
-  const lockEditorAt = (index: number) => {
+  const beginEditingSegment = (index: number) => {
     setActiveRow(index);
-    setSubtitleLock(true);
+    clearLockedReturnTimer();
   };
 
   const toggleFollowLock = () => {
@@ -514,14 +514,9 @@ export default function App() {
     const nextPlayback = segments.findIndex((segment) => nextTime >= segment.start_seconds && nextTime <= segment.end_seconds);
     setPlaybackRow(nextPlayback);
     if (nextPlayback < 0) return;
-    if (subtitleLockedRef.current) {
-      setActiveRow(nextPlayback);
-      if (!lockedReturnTimerRef.current && !autoReturningRef.current) {
-        scrollToRowAnchor(nextPlayback);
-      }
-      return;
+    if (subtitleLockedRef.current && !lockedReturnTimerRef.current && !autoReturningRef.current) {
+      scrollToRowAnchor(nextPlayback);
     }
-    setActiveRow(nextPlayback);
   };
 
   const seekToSegment = (segment: SubtitleSegment, index: number, shouldPlay = true) => {
@@ -541,7 +536,7 @@ export default function App() {
   };
 
   const focusSegment = (index: number) => {
-    lockEditorAt(index);
+    beginEditingSegment(index);
     window.setTimeout(() => {
       document.querySelector<HTMLTextAreaElement>(`[data-subtitle-index="${index}"] textarea`)?.focus();
     }, 0);
@@ -1022,10 +1017,10 @@ export default function App() {
                       <button title="编辑" onClick={() => focusSegment(index)}><Edit3 size={14} /></button>
                     </div>
                     <div className="clipFields" onClick={(event) => event.stopPropagation()}>
-                      <input type="number" step="0.01" value={segment.start_seconds} onFocus={() => lockEditorAt(index)} onChange={(event) => updateSegment(index, { start_seconds: Number(event.target.value) })} />
-                      <input type="number" step="0.01" value={segment.end_seconds} onFocus={() => lockEditorAt(index)} onChange={(event) => updateSegment(index, { end_seconds: Number(event.target.value) })} />
+                      <input type="number" step="0.01" value={segment.start_seconds} onFocus={() => beginEditingSegment(index)} onChange={(event) => updateSegment(index, { start_seconds: Number(event.target.value) })} />
+                      <input type="number" step="0.01" value={segment.end_seconds} onFocus={() => beginEditingSegment(index)} onChange={(event) => updateSegment(index, { end_seconds: Number(event.target.value) })} />
                     </div>
-                    <textarea value={segment.text} onFocus={() => lockEditorAt(index)} onClick={(event) => event.stopPropagation()} onChange={(event) => updateSegment(index, { text: event.target.value })} />
+                    <textarea value={segment.text} onFocus={() => beginEditingSegment(index)} onClick={(event) => event.stopPropagation()} onChange={(event) => updateSegment(index, { text: event.target.value })} />
                   </div>
                 </div>
               ))}

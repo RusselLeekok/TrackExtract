@@ -1135,29 +1135,29 @@ dd {
 }
 
 .subtitleClip.active .clipBody {
-  border-color: var(--color-primary);
-  background: var(--color-primary);
-  box-shadow: 0 14px 28px rgba(197, 106, 60, 0.22);
+  border-color: #e3ca63;
+  background: #fff7cf;
+  box-shadow: 0 0 0 2px rgba(227, 202, 99, 0.28);
 }
 
 .subtitleClip.active textarea,
 .subtitleClip.active input {
-  color: #fffdf8;
+  color: var(--color-heading);
 }
 
 .subtitleClip.active input {
-  border-color: rgba(255, 255, 255, 0.28);
-  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(194, 170, 56, 0.38);
+  background: rgba(255, 255, 255, 0.64);
 }
 
 .subtitleClip.playing:not(.active) .clipBody {
-  border-color: var(--color-primary);
-  background: var(--color-primary-soft);
-  box-shadow: inset 4px 0 0 var(--color-primary);
+  border-color: #9bb6d9;
+  background: #f3f7fd;
+  box-shadow: 0 0 0 2px rgba(155, 182, 217, 0.28);
 }
 
 .subtitleClip.playing .clipTime {
-  color: var(--color-primary-strong);
+  color: #476b97;
   font-weight: 800;
 }
 
