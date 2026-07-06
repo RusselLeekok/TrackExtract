@@ -708,6 +708,21 @@ dd {
   object-fit: contain;
 }
 
+.videoPending {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: var(--space-2);
+  min-height: 480px;
+  padding: var(--space-6);
+  color: #fffdf8;
+  text-align: center;
+}
+
+.videoPending span {
+  color: rgba(255, 253, 248, 0.68);
+}
+
 .captionPreview {
   position: absolute;
   left: 8%;

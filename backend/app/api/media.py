@@ -105,7 +105,8 @@ def list_media(db: Session = Depends(get_db)) -> list[MediaItem]:
     return list(
         db.execute(
             select(MediaItem)
-            .order_by(MediaItem.created_at.desc())
+            # Use PK order to avoid MySQL filesort memory spikes on large tables.
+            .order_by(MediaItem.id.desc())
             .options(
                 selectinload(MediaItem.tracks),
                 selectinload(MediaItem.exports),

@@ -300,6 +300,7 @@ export default function App() {
   const currentCaption = useMemo(() => {
     return segments.find((segment) => captionTime >= segment.start_seconds && captionTime <= segment.end_seconds)?.text || "";
   }, [captionTime, segments]);
+  const canLoadMediaSource = media ? media.source !== "url" || media.status === "ready" : false;
 
   const subtitleExportById = useMemo(() => {
     const byId = new Map<number, NonNullable<Media["exports"]>[number]>();
@@ -758,13 +759,23 @@ export default function App() {
 
             <section className="hero">
               <div className="videoWrap">
-                <video
-                  ref={videoRef}
-                  src={mediaSourceUrl(media.id)}
-                  controls
-                  onTimeUpdate={(event) => handleVideoTimeUpdate(event.currentTarget.currentTime)}
-                />
-                {currentCaption && <div className="captionPreview">{currentCaption}</div>}
+                {canLoadMediaSource ? (
+                  <>
+                    <video
+                      ref={videoRef}
+                      src={mediaSourceUrl(media.id)}
+                      controls
+                      onTimeUpdate={(event) => handleVideoTimeUpdate(event.currentTarget.currentTime)}
+                    />
+                    {currentCaption && <div className="captionPreview">{currentCaption}</div>}
+                  </>
+                ) : (
+                  <div className="videoPending">
+                    <Loader2 className="spin" size={24} />
+                    <strong>正在导入在线视频</strong>
+                    <span>下载和分析完成后会自动加载播放器</span>
+                  </div>
+                )}
               </div>
             </section>
 
