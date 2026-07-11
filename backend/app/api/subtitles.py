@@ -101,6 +101,7 @@ def save_segments(subtitle_id: int, payload: SubtitleSaveRequest, db: Session = 
                 start_seconds=item.start_seconds,
                 end_seconds=item.end_seconds,
                 text=item.text,
+                alignment_json=item.alignment_json,
             )
         )
     db.commit()

@@ -201,13 +201,37 @@ def subtitle_text_len(text: str) -> int:
     return len(clean_subtitle_text(text).replace(" ", ""))
 
 
+def whisper_word_payload(word: object) -> dict:
+    text = str(getattr(word, "word", "") or "")
+    start = float(getattr(word, "start", 0.0) or 0.0)
+    end = float(getattr(word, "end", start) or start)
+    return {
+        "text": text,
+        "start": start,
+        "end": end,
+        "start_ms": int(round(start * 1000)),
+        "end_ms": int(round(end * 1000)),
+    }
+
+
+def alignment_for_words(words: list[dict]) -> dict | None:
+    cleaned = [
+        {
+            "text": word["text"],
+            "start_ms": word["start_ms"],
+            "end_ms": word["end_ms"],
+        }
+        for word in words
+        if word.get("text")
+    ]
+    if not cleaned:
+        return None
+    return {"source": "faster-whisper", "version": 1, "words": cleaned}
+
+
 def split_whisper_segment_words(segment: object, sequence: int, max_chars: int, max_seconds: float) -> tuple[list[dict], int]:
     words = [
-        {
-            "text": str(getattr(word, "word", "") or ""),
-            "start": float(getattr(word, "start", 0.0) or 0.0),
-            "end": float(getattr(word, "end", 0.0) or 0.0),
-        }
+        whisper_word_payload(word)
         for word in (getattr(segment, "words", None) or [])
     ]
     if not words:
@@ -235,6 +259,7 @@ def split_whisper_segment_words(segment: object, sequence: int, max_chars: int, 
                     "start_seconds": chunk[0]["start"],
                     "end_seconds": max(chunk[-1]["end"], chunk[0]["start"] + 0.15),
                     "text": text,
+                    "alignment_json": alignment_for_words(chunk),
                 }
             )
             sequence += 1
@@ -282,7 +307,7 @@ def transcribe_audio(
             f"Loading faster-whisper model={settings.whisper_model_size} device={settings.whisper_device} compute={settings.whisper_compute_type}"
         )
     model = WhisperModel(settings.whisper_model_size, device=settings.whisper_device, compute_type=settings.whisper_compute_type)
-    segments_iter, info = model.transcribe(str(audio_path), language=language, vad_filter=True, word_timestamps=split_enabled)
+    segments_iter, info = model.transcribe(str(audio_path), language=language, vad_filter=True, word_timestamps=True)
     if logger:
         logger.write(f"Detected language={info.language} probability={info.language_probability}")
     segments: list[dict] = []
@@ -294,12 +319,14 @@ def transcribe_audio(
             rows, sequence = split_whisper_segment_words(segment, sequence, max_chars, max_seconds)
             segments.extend(rows)
         else:
+            words = [whisper_word_payload(word) for word in (getattr(segment, "words", None) or [])]
             segments.append(
                 {
                     "sequence": index,
                     "start_seconds": float(segment.start),
                     "end_seconds": float(segment.end),
                     "text": segment.text.strip(),
+                    "alignment_json": alignment_for_words(words),
                 }
             )
     subtitle_path = unique_path("exports", output_format, output_stem or "whisper_subtitle")

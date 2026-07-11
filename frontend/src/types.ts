@@ -65,4 +65,13 @@ export interface SubtitleSegment {
   start_seconds: number;
   end_seconds: number;
   text: string;
+  alignment_json?: {
+    source?: string;
+    version?: number;
+    words?: Array<{
+      text: string;
+      start_ms: number;
+      end_ms: number;
+    }>;
+  } | null;
 }

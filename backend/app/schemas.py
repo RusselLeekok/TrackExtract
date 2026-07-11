@@ -110,6 +110,7 @@ class SubtitleSegmentIn(BaseModel):
     start_seconds: float = Field(ge=0)
     end_seconds: float = Field(gt=0)
     text: str
+    alignment_json: dict | None = None
 
 
 class SubtitleSegmentRead(SubtitleSegmentIn):

@@ -154,6 +154,6 @@ class SubtitleSegment(TimestampMixin, Base):
     start_seconds: Mapped[float] = mapped_column(Float)
     end_seconds: Mapped[float] = mapped_column(Float)
     text: Mapped[str] = mapped_column(Text)
+    alignment_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     version: Mapped[SubtitleVersion] = relationship(back_populates="segments")
-

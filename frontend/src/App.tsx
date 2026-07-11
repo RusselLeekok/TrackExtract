@@ -19,6 +19,7 @@ import {
   Search,
   Settings2,
   Trash2,
+  Undo2,
   Upload,
   Wand2,
   X
@@ -47,6 +48,7 @@ import {
 import type { Media, SubtitleSegment, Task, Track, TrackType } from "./types";
 
 type ViewMode = "history" | "workspace";
+type AlignmentWord = { text: string; start_ms: number; end_ms: number };
 
 const trackLabels: Record<TrackType, string> = {
   video: "视频轨",
@@ -126,6 +128,8 @@ export default function App() {
   const lockedReturnTimerRef = useRef<number | null>(null);
   const subtitleLockedRef = useRef(false);
   const autoReturningRef = useRef(false);
+  const textCursorRef = useRef<Record<number, { start: number; end: number }>>({});
+  const undoStackRef = useRef<SubtitleSegment[][]>([]);
   const firstMediaId = initialMediaId();
   const [viewMode, setViewMode] = useState<ViewMode>(firstMediaId ? "workspace" : "history");
   const [mediaItems, setMediaItems] = useState<Media[]>([]);
@@ -144,6 +148,8 @@ export default function App() {
   const [activeRow, setActiveRow] = useState(0);
   const [playbackRow, setPlaybackRow] = useState(-1);
   const [subtitleLocked, setSubtitleLocked] = useState(false);
+  const [subtitleDirty, setSubtitleDirty] = useState(false);
+  const [undoDepth, setUndoDepth] = useState(0);
   const [captionTime, setCaptionTime] = useState(0);
   const [transcribeFormat, setTranscribeFormat] = useState<"srt" | "vtt">("srt");
   const [externalAudioExportId, setExternalAudioExportId] = useState<number | null>(null);
@@ -256,10 +262,16 @@ export default function App() {
   useEffect(() => {
     if (!subtitleId) {
       setSegments([]);
+      setSubtitleDirty(false);
+      undoStackRef.current = [];
+      setUndoDepth(0);
       return;
     }
     if (media && !media.subtitle_versions.some((version) => version.id === subtitleId)) {
       setSegments([]);
+      setSubtitleDirty(false);
+      undoStackRef.current = [];
+      setUndoDepth(0);
       return;
     }
     let cancelled = false;
@@ -267,6 +279,10 @@ export default function App() {
     setPlaybackRow(-1);
     setSubtitleLock(false);
     setSegments([]);
+    setSubtitleDirty(false);
+    undoStackRef.current = [];
+    setUndoDepth(0);
+    textCursorRef.current = {};
     getSegments(subtitleId)
       .then((items) => {
         if (!cancelled) setSegments(items);
@@ -456,20 +472,162 @@ export default function App() {
     }
   };
 
-  const updateSegment = (index: number, patch: Partial<SubtitleSegment>) => {
-    setSegments((items) => items.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
-  };
+  const cloneSegments = (items: SubtitleSegment[]) => items.map((item) => ({
+    ...item,
+    alignment_json: item.alignment_json ? JSON.parse(JSON.stringify(item.alignment_json)) : null
+  }));
 
   const resequence = (items: SubtitleSegment[]) => items.map((item, index) => ({ ...item, sequence: index + 1 }));
+
+  const commitSegments = (items: SubtitleSegment[], nextActiveRow = activeRow) => {
+    undoStackRef.current = [...undoStackRef.current, cloneSegments(segments)].slice(-50);
+    setUndoDepth(undoStackRef.current.length);
+    setSegments(resequence(items));
+    setActiveRow(Math.max(0, Math.min(nextActiveRow, items.length - 1)));
+    setSubtitleDirty(true);
+  };
+
+  const undoSubtitleEdit = () => {
+    const previous = undoStackRef.current.pop();
+    if (!previous) return;
+    setUndoDepth(undoStackRef.current.length);
+    setSegments(previous);
+    setActiveRow((row) => Math.max(0, Math.min(row, previous.length - 1)));
+    setSubtitleDirty(true);
+  };
+
+  const updateSegment = (index: number, patch: Partial<SubtitleSegment>) => {
+    setSegments((items) => items.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
+    setSubtitleDirty(true);
+  };
+
+  const rememberTextCursor = (index: number, element: HTMLTextAreaElement) => {
+    textCursorRef.current[index] = { start: element.selectionStart, end: element.selectionEnd };
+    setActiveRow(index);
+  };
+
+  const wordsForSegment = (segment: SubtitleSegment): AlignmentWord[] => {
+    const words = segment.alignment_json?.words;
+    if (!Array.isArray(words)) return [];
+    return words
+      .filter((word) => word && typeof word.text === "string" && Number.isFinite(word.start_ms) && Number.isFinite(word.end_ms))
+      .map((word) => ({ text: word.text, start_ms: word.start_ms, end_ms: word.end_ms }));
+  };
+
+  const alignmentFromWords = (words: AlignmentWord[]) => {
+    if (!words.length) return null;
+    return { source: "faster-whisper", version: 1, words };
+  };
+
+  const wordRanges = (segment: SubtitleSegment) => {
+    const text = segment.text;
+    let cursor = 0;
+    return wordsForSegment(segment).map((word) => {
+      const raw = word.text || "";
+      const clean = raw.trim();
+      const needle = clean || raw;
+      const lowerText = text.toLowerCase();
+      const lowerNeedle = needle.toLowerCase();
+      let start = lowerNeedle ? lowerText.indexOf(lowerNeedle, cursor) : -1;
+      if (start < 0) start = Math.min(cursor + Math.max(0, raw.search(/\S/)), Math.max(0, text.length - needle.length));
+      const end = Math.max(start + needle.length, start);
+      cursor = Math.min(text.length, end);
+      return { word, start: Math.max(0, start), end: Math.min(text.length, end) };
+    });
+  };
+
+  const fallbackTextCut = (text: string) => {
+    if (text.length <= 1) return 0;
+    const middle = Math.floor(text.length / 2);
+    const left = text.lastIndexOf(" ", middle);
+    const right = text.indexOf(" ", middle);
+    const cut = right >= 0 && (left < 0 || right - middle < middle - left) ? right : left;
+    return Math.max(1, Math.min(text.length - 1, cut > 0 ? cut : middle));
+  };
+
+  const playheadSeconds = () => videoRef.current?.currentTime ?? captionTime;
+
+  const playheadInsideSegment = (segment: SubtitleSegment) => {
+    const current = playheadSeconds();
+    return current > segment.start_seconds && current < segment.end_seconds ? current : null;
+  };
+
+  const inferCutFromAlignment = (segment: SubtitleSegment, splitTimeSeconds: number | null) => {
+    const ranges = wordRanges(segment);
+    if (!ranges.length) return null;
+    const splitMs = splitTimeSeconds == null ? null : Math.round(splitTimeSeconds * 1000);
+    if (splitMs != null) {
+      const timedIndex = ranges.findIndex(({ word }) => splitMs <= word.end_ms);
+      if (timedIndex >= 0) {
+        const item = ranges[timedIndex];
+        const midpoint = (item.word.start_ms + item.word.end_ms) / 2;
+        return Math.max(1, Math.min(segment.text.length - 1, splitMs <= midpoint ? item.start : item.end));
+      }
+    }
+    const middleMs = ((segment.start_seconds + segment.end_seconds) / 2) * 1000;
+    const middleIndex = ranges.findIndex(({ word }) => middleMs <= word.end_ms);
+    const item = ranges[middleIndex >= 0 ? middleIndex : Math.floor(ranges.length / 2)];
+    return Math.max(1, Math.min(segment.text.length - 1, item.start || item.end));
+  };
+
+  const inferSplitTime = (segment: SubtitleSegment, cut: number) => {
+    const playhead = playheadInsideSegment(segment);
+    if (playhead != null) return playhead;
+    const ranges = wordRanges(segment);
+    const matched = ranges.find(({ start, end }) => cut >= start && cut <= end);
+    if (matched) {
+      const span = Math.max(1, matched.end - matched.start);
+      const ratio = Math.max(0, Math.min(1, (cut - matched.start) / span));
+      const splitMs = matched.word.start_ms + (matched.word.end_ms - matched.word.start_ms) * ratio;
+      return splitMs / 1000;
+    }
+    const after = ranges.find(({ start }) => cut < start);
+    if (after) return after.word.start_ms / 1000;
+    return (segment.start_seconds + segment.end_seconds) / 2;
+  };
+
+  const clampSplitTime = (segment: SubtitleSegment, value: number) => {
+    const duration = segment.end_seconds - segment.start_seconds;
+    if (duration <= 0.04) return (segment.start_seconds + segment.end_seconds) / 2;
+    return Math.min(segment.end_seconds - 0.02, Math.max(segment.start_seconds + 0.02, value));
+  };
+
+  const splitAlignment = (segment: SubtitleSegment, cut: number, splitSeconds: number) => {
+    const ranges = wordRanges(segment);
+    if (!ranges.length) return [null, null] as const;
+    let first = ranges.filter(({ end }) => end <= cut).map(({ word }) => word);
+    let second = ranges.filter(({ start }) => start >= cut).map(({ word }) => word);
+    const crossing = ranges.filter(({ start, end }) => start < cut && end > cut);
+    for (const item of crossing) {
+      if (cut - item.start >= item.end - cut) first.push(item.word);
+      else second.push(item.word);
+    }
+    if (!first.length || !second.length) {
+      const splitMs = Math.round(splitSeconds * 1000);
+      first = ranges.filter(({ word }) => word.end_ms <= splitMs).map(({ word }) => word);
+      second = ranges.filter(({ word }) => word.start_ms >= splitMs).map(({ word }) => word);
+      for (const item of ranges.filter(({ word }) => word.start_ms < splitMs && word.end_ms > splitMs)) {
+        if (splitMs - item.word.start_ms >= item.word.end_ms - splitMs) first.push(item.word);
+        else second.push(item.word);
+      }
+    }
+    return [alignmentFromWords(first), alignmentFromWords(second)] as const;
+  };
+
+  const mergeAlignment = (current: SubtitleSegment, next: SubtitleSegment) => {
+    const currentWords = wordsForSegment(current);
+    const nextWords = wordsForSegment(next);
+    if (!currentWords.length || !nextWords.length) return null;
+    return alignmentFromWords([...currentWords, ...nextWords]);
+  };
 
   const addSegment = () => {
     const pivot = segments[activeRow];
     const start = pivot ? pivot.end_seconds : 0;
-    const next = { id: null, sequence: activeRow + 2, start_seconds: start, end_seconds: start + 2, text: "" };
+    const next = { id: null, sequence: activeRow + 2, start_seconds: start, end_seconds: start + 2, text: "", alignment_json: null };
     const items = [...segments];
     items.splice(activeRow + 1, 0, next);
-    setSegments(resequence(items));
-    setActiveRow(Math.min(activeRow + 1, items.length - 1));
+    commitSegments(items, Math.min(activeRow + 1, items.length - 1));
   };
 
   const duplicateSegment = (index: number) => {
@@ -478,13 +636,11 @@ export default function App() {
     const copy = { ...source, id: null, sequence: source.sequence + 1 };
     const items = [...segments];
     items.splice(index + 1, 0, copy);
-    setSegments(resequence(items));
-    setActiveRow(index + 1);
+    commitSegments(items, index + 1);
   };
 
   const deleteSegment = () => {
-    setSegments(resequence(segments.filter((_, index) => index !== activeRow)));
-    setActiveRow(Math.max(0, activeRow - 1));
+    commitSegments(segments.filter((_, index) => index !== activeRow), Math.max(0, activeRow - 1));
   };
 
   const mergeSegment = () => {
@@ -492,22 +648,34 @@ export default function App() {
     const current = segments[activeRow];
     const next = segments[activeRow + 1];
     const mergedText = `${current.text.trim()} ${next.text.trim()}`.replace(/\s+/g, " ").trim();
-    const merged = { ...current, end_seconds: next.end_seconds, text: mergedText };
+    const merged = { ...current, end_seconds: next.end_seconds, text: mergedText, alignment_json: mergeAlignment(current, next) };
     const items = [...segments];
     items.splice(activeRow, 2, merged);
-    setSegments(resequence(items));
+    commitSegments(items, activeRow);
   };
 
   const splitSegment = () => {
     const current = segments[activeRow];
-    if (!current) return;
-    const midpoint = (current.start_seconds + current.end_seconds) / 2;
-    const cut = Math.max(1, Math.floor(current.text.length / 2));
-    const first = { ...current, end_seconds: midpoint, text: current.text.slice(0, cut).trim() };
-    const second = { id: null, sequence: current.sequence + 1, start_seconds: midpoint, end_seconds: current.end_seconds, text: current.text.slice(cut).trim() };
+    if (!current || current.text.length <= 1) return;
+    const playhead = playheadInsideSegment(current);
+    const cursor = textCursorRef.current[activeRow];
+    const cursorCut = cursor && cursor.start === cursor.end && cursor.start > 0 && cursor.start < current.text.length ? cursor.start : null;
+    const inferredCut = cursorCut ?? inferCutFromAlignment(current, playhead) ?? fallbackTextCut(current.text);
+    if (inferredCut <= 0 || inferredCut >= current.text.length) return;
+    const splitTime = clampSplitTime(current, inferSplitTime(current, inferredCut));
+    const [firstAlignment, secondAlignment] = splitAlignment(current, inferredCut, splitTime);
+    const first = { ...current, end_seconds: splitTime, text: current.text.slice(0, inferredCut).trim(), alignment_json: firstAlignment };
+    const second = {
+      id: null,
+      sequence: current.sequence + 1,
+      start_seconds: splitTime,
+      end_seconds: current.end_seconds,
+      text: current.text.slice(inferredCut).trim(),
+      alignment_json: secondAlignment
+    };
     const items = [...segments];
     items.splice(activeRow, 1, first, second);
-    setSegments(resequence(items));
+    commitSegments(items, activeRow + 1);
   };
 
   const handleVideoTimeUpdate = (nextTime: number) => {
@@ -556,6 +724,9 @@ export default function App() {
     try {
       const result = await saveSegments(subtitleId, "编辑字幕", resequence(segments));
       setSubtitleId(result.subtitle_version_id);
+      setSubtitleDirty(false);
+      undoStackRef.current = [];
+      setUndoDepth(0);
       await refreshMedia();
     } catch (error) {
       showError(error);
@@ -988,10 +1159,11 @@ export default function App() {
             )}
             <div className="editorToolbar">
               <button onClick={addSegment} title="新增"><Plus size={15} /></button>
+              <button onClick={undoSubtitleEdit} title="撤销" disabled={undoDepth === 0}><Undo2 size={15} />撤销</button>
               <button onClick={mergeSegment} title="合并"><Check size={15} />合并</button>
               <button onClick={splitSegment} title="拆分"><Scissors size={15} />拆分</button>
               <button onClick={deleteSegment} title="删除"><Trash2 size={15} /></button>
-              <button onClick={handleSaveSegments} title="保存"><Save size={15} />保存</button>
+              <button onClick={handleSaveSegments} title={subtitleDirty ? "有未保存修改" : "保存"}><Save size={15} />保存{subtitleDirty ? "*" : ""}</button>
               <button className={subtitleLocked ? "lockButton locked" : "lockButton"} onClick={toggleFollowLock} title={subtitleLocked ? "取消锁定，停止固定播放字幕位置" : "锁定字幕列表，让当前播放字幕固定在同一位置切换"}>
                 <Play size={15} />{subtitleLocked ? "取消锁定" : "锁定"}
               </button>
@@ -1031,7 +1203,23 @@ export default function App() {
                       <input type="number" step="0.01" value={segment.start_seconds} onFocus={() => beginEditingSegment(index)} onChange={(event) => updateSegment(index, { start_seconds: Number(event.target.value) })} />
                       <input type="number" step="0.01" value={segment.end_seconds} onFocus={() => beginEditingSegment(index)} onChange={(event) => updateSegment(index, { end_seconds: Number(event.target.value) })} />
                     </div>
-                    <textarea value={segment.text} onFocus={() => beginEditingSegment(index)} onClick={(event) => event.stopPropagation()} onChange={(event) => updateSegment(index, { text: event.target.value })} />
+                    <textarea
+                      value={segment.text}
+                      onFocus={(event) => {
+                        beginEditingSegment(index);
+                        rememberTextCursor(index, event.currentTarget);
+                      }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        rememberTextCursor(index, event.currentTarget);
+                      }}
+                      onKeyUp={(event) => rememberTextCursor(index, event.currentTarget)}
+                      onSelect={(event) => rememberTextCursor(index, event.currentTarget)}
+                      onChange={(event) => {
+                        rememberTextCursor(index, event.currentTarget);
+                        updateSegment(index, { text: event.target.value, alignment_json: null });
+                      }}
+                    />
                   </div>
                 </div>
               ))}
